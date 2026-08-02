@@ -1,8 +1,21 @@
 // Ali Electronics - Warehouse Management System
-// Client-side Application Logic with LocalStorage persistence
+// Client-side Application Logic with LocalStorage & Supabase Real-time Cloud Sync
 
 // Predefined entry passcode for authorization
 const AUTH_PASSCODE = "ali2026";
+
+// Supabase Cloud Storage Configuration
+const SUPABASE_URL = "https://zlhuditqwksxhtxjftgc.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpsaHVkaXRxd2tzeGh0eGpmdGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NTY3NzksImV4cCI6MjEwMTIzMjc3OX0.yINnjWAi5abRL3jMsaRSLGe6_d1cuc07bi-8KsKUTDU";
+
+let supabaseClient = null;
+if (window.supabase) {
+    try {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (err) {
+        console.error("Supabase client init error:", err);
+    }
+}
 
 // State database keys
 const KEYS = {
@@ -32,12 +45,141 @@ let dashboardTimeframes = {
     outgoing: "daily"
 };
 
-// Save helper
+// Save helper (Local + Supabase Cloud)
 function saveState() {
     localStorage.setItem(KEYS.INCOMING, JSON.stringify(state.incoming));
     localStorage.setItem(KEYS.OUTGOING, JSON.stringify(state.outgoing));
     localStorage.setItem(KEYS.RETURNED, JSON.stringify(state.returned));
     updateDashboard();
+    pushStateToSupabase();
+}
+
+let syncTimeout = null;
+async function pushStateToSupabase() {
+    if (!supabaseClient) return;
+
+    clearTimeout(syncTimeout);
+    syncTimeout = setTimeout(async () => {
+        try {
+            const payload = {
+                id: "warehouse_state",
+                data: state,
+                updated_at: new Date().toISOString()
+            };
+
+            const { error } = await supabaseClient
+                .from('app_data')
+                .upsert(payload, { onConflict: 'id' });
+
+            if (error) {
+                console.warn("Supabase push notice:", error.message);
+                updateSyncStatusIndicator(false);
+            } else {
+                updateSyncStatusIndicator(true);
+            }
+        } catch (err) {
+            console.error("Supabase push failed:", err);
+            updateSyncStatusIndicator(false);
+        }
+    }, 250);
+}
+
+// Initial Sync from Supabase Cloud Database
+async function syncFromSupabase() {
+    if (!supabaseClient) return;
+
+    try {
+        const { data, error } = await supabaseClient
+            .from('app_data')
+            .select('data')
+            .eq('id', 'warehouse_state')
+            .maybeSingle();
+
+        if (error) {
+            console.warn("Supabase fetch notice:", error.message);
+            updateSyncStatusIndicator(false);
+            return;
+        }
+
+        if (data && data.data) {
+            const cloudState = data.data;
+            state.incoming = cloudState.incoming || [];
+            state.outgoing = cloudState.outgoing || [];
+            state.returned = cloudState.returned || [];
+
+            localStorage.setItem(KEYS.INCOMING, JSON.stringify(state.incoming));
+            localStorage.setItem(KEYS.OUTGOING, JSON.stringify(state.outgoing));
+            localStorage.setItem(KEYS.RETURNED, JSON.stringify(state.returned));
+
+            renderAllTables();
+            updateDashboard();
+            updateSyncStatusIndicator(true);
+        } else {
+            // Cloud is empty, push existing local data to cloud
+            if (state.incoming.length > 0 || state.outgoing.length > 0 || state.returned.length > 0) {
+                await pushStateToSupabase();
+            } else {
+                updateSyncStatusIndicator(true);
+            }
+        }
+    } catch (err) {
+        console.error("Cloud fetch error:", err);
+        updateSyncStatusIndicator(false);
+    }
+}
+
+// Realtime Listener for sync across multiple laptops/devices
+function initRealtimeSync() {
+    if (!supabaseClient) return;
+
+    try {
+        supabaseClient
+            .channel('public:app_data')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'app_data', filter: 'id=eq.warehouse_state' },
+                (payload) => {
+                    if (payload.new && payload.new.data) {
+                        const cloudState = payload.new.data;
+                        state.incoming = cloudState.incoming || [];
+                        state.outgoing = cloudState.outgoing || [];
+                        state.returned = cloudState.returned || [];
+
+                        localStorage.setItem(KEYS.INCOMING, JSON.stringify(state.incoming));
+                        localStorage.setItem(KEYS.OUTGOING, JSON.stringify(state.outgoing));
+                        localStorage.setItem(KEYS.RETURNED, JSON.stringify(state.returned));
+
+                        renderAllTables();
+                        updateDashboard();
+                        updateSyncStatusIndicator(true);
+                    }
+                }
+            )
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    updateSyncStatusIndicator(true);
+                }
+            });
+    } catch (err) {
+        console.error("Realtime subscription error:", err);
+    }
+}
+
+// UI Badge Indicator for Cloud Connection
+function updateSyncStatusIndicator(isOnline) {
+    const el = document.getElementById("sync-status-indicator");
+    if (!el) return;
+    if (isOnline) {
+        el.style.display = "inline-flex";
+        el.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
+        el.style.color = "#10b981";
+        el.innerHTML = `<i class='bx bx-cloud-download' style='font-size: 1rem; margin-right: 4px;'></i> Canlı Bazaya Qoşulub`;
+    } else {
+        el.style.display = "inline-flex";
+        el.style.backgroundColor = "rgba(245, 158, 11, 0.15)";
+        el.style.color = "#f59e0b";
+        el.innerHTML = `<i class='bx bx-cloud-off' style='font-size: 1rem; margin-right: 4px;'></i> SQL Cədvəli Gözlənilir`;
+    }
 }
 
 // App Initialization
@@ -65,6 +207,10 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initial Render of tables & dashboard
     renderAllTables();
     updateDashboard();
+
+    // Trigger Supabase cloud sync & realtime listener
+    syncFromSupabase();
+    initRealtimeSync();
 });
 
 // 0. Passcode Authentication Logic
