@@ -810,25 +810,29 @@ function getWarehouseInventory() {
         }
     });
 
-    // 2. Process Outgoing Goods
+    // 2. Process Outgoing Goods (Yalnız Razin anbarından çıxan mallar anbar stokunu azaldır)
     state.outgoing.forEach(out => {
-        const modelKey = getItemName(out).trim();
-        if (modelKey && modelKey !== '-') {
-            if (!inventory[modelKey]) {
-                inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+        if ((out.warehouse || '').trim() === "Razin") {
+            const modelKey = getItemName(out).trim();
+            if (modelKey && modelKey !== '-') {
+                if (!inventory[modelKey]) {
+                    inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+                }
+                inventory[modelKey].outgoing += out.qty;
             }
-            inventory[modelKey].outgoing += out.qty;
         }
     });
 
-    // 3. Process Returned Goods
+    // 3. Process Returned Goods (Yalnız Razin anbarına qaytarılan mallar stoka bərpa olunur)
     state.returned.forEach(ret => {
-        const modelKey = getItemName(ret).trim();
-        if (modelKey && modelKey !== '-') {
-            if (!inventory[modelKey]) {
-                inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+        if (!ret.warehouse || (ret.warehouse || '').trim() === "Razin") {
+            const modelKey = getItemName(ret).trim();
+            if (modelKey && modelKey !== '-') {
+                if (!inventory[modelKey]) {
+                    inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+                }
+                inventory[modelKey].returned += ret.qty;
             }
-            inventory[modelKey].returned += ret.qty;
         }
     });
 
