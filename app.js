@@ -21,14 +21,16 @@ if (window.supabase) {
 const KEYS = {
     INCOMING: "ali_incoming",
     OUTGOING: "ali_outgoing",
-    RETURNED: "ali_returned"
+    RETURNED: "ali_returned",
+    EXTRA_PAYMENTS: "ali_extra_payments"
 };
 
 // Initialize State
 let state = {
     incoming: JSON.parse(localStorage.getItem(KEYS.INCOMING)) || [],
     outgoing: JSON.parse(localStorage.getItem(KEYS.OUTGOING)) || [],
-    returned: JSON.parse(localStorage.getItem(KEYS.RETURNED)) || []
+    returned: JSON.parse(localStorage.getItem(KEYS.RETURNED)) || [],
+    extra_payments: JSON.parse(localStorage.getItem(KEYS.EXTRA_PAYMENTS)) || []
 };
 
 // Search Queries State
@@ -36,7 +38,9 @@ let searchQueries = {
     dash: "",
     incoming: "",
     outgoing: "",
-    anbar: ""
+    anbar: "",
+    extra: "",
+    borc: ""
 };
 
 // Dashboard Timeframe Selections State
@@ -50,6 +54,7 @@ function saveState() {
     localStorage.setItem(KEYS.INCOMING, JSON.stringify(state.incoming));
     localStorage.setItem(KEYS.OUTGOING, JSON.stringify(state.outgoing));
     localStorage.setItem(KEYS.RETURNED, JSON.stringify(state.returned));
+    localStorage.setItem(KEYS.EXTRA_PAYMENTS, JSON.stringify(state.extra_payments));
     updateDashboard();
     pushStateToSupabase();
 }
@@ -106,10 +111,13 @@ async function syncFromSupabase() {
             state.incoming = cloudState.incoming || [];
             state.outgoing = cloudState.outgoing || [];
             state.returned = cloudState.returned || [];
+            state.extra_payments = cloudState.extra_payments || [];
+            sanitizeStateData();
 
             localStorage.setItem(KEYS.INCOMING, JSON.stringify(state.incoming));
             localStorage.setItem(KEYS.OUTGOING, JSON.stringify(state.outgoing));
             localStorage.setItem(KEYS.RETURNED, JSON.stringify(state.returned));
+            localStorage.setItem(KEYS.EXTRA_PAYMENTS, JSON.stringify(state.extra_payments));
 
             renderAllTables();
             updateDashboard();
@@ -144,10 +152,13 @@ function initRealtimeSync() {
                         state.incoming = cloudState.incoming || [];
                         state.outgoing = cloudState.outgoing || [];
                         state.returned = cloudState.returned || [];
+                        state.extra_payments = cloudState.extra_payments || [];
+                        sanitizeStateData();
 
                         localStorage.setItem(KEYS.INCOMING, JSON.stringify(state.incoming));
                         localStorage.setItem(KEYS.OUTGOING, JSON.stringify(state.outgoing));
                         localStorage.setItem(KEYS.RETURNED, JSON.stringify(state.returned));
+                        localStorage.setItem(KEYS.EXTRA_PAYMENTS, JSON.stringify(state.extra_payments));
 
                         renderAllTables();
                         updateDashboard();
@@ -203,6 +214,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initSearchListeners();
     initTimeframeToggleListeners();
     setDefaultDates();
+    initStatisticsTab();
     
     // Initial Render of tables & dashboard
     renderAllTables();
@@ -315,12 +327,85 @@ function initNavigation() {
     });
 }
 
+// Helper: Clean model name string (strips legacy '(X ədəd)' or ' ədəd' quantity suffixes)
+function cleanModelName(str) {
+    if (!str) return '';
+    return str
+        .replace(/\s*\(\d+\s*ədəd\)/gi, '')
+        .replace(/\s*\d+\s*ədəd/gi, '')
+        .replace(/\s*ədəd/gi, '')
+        .replace(/[\(\)]/g, '')
+        .trim();
+}
+
+// Helper: Normalization key generator (e.g. "aux 09 ff" or "AUX 09FF" -> "AUX09FF")
+function getNormalizedModelKey(str) {
+    if (!str) return '';
+    return cleanModelName(str).toUpperCase().replace(/\s+/g, '');
+}
+
+// Canonical display map to store clean formatted model names
+const canonicalModelMap = new Map();
+
+function formatCanonicalModel(str) {
+    const cleaned = cleanModelName(str);
+    if (!cleaned) return '-';
+    
+    const key = getNormalizedModelKey(cleaned);
+    if (!key) return '-';
+
+    if (canonicalModelMap.has(key)) {
+        return canonicalModelMap.get(key);
+    }
+
+    let formatted = cleaned.toUpperCase();
+    // If it's a merged string like "AUX09FF", split into "AUX 09 FF"
+    if (!/\s/.test(formatted)) {
+        formatted = formatted.replace(/^([A-Z]+)(\d+)([A-Z]*)$/, '$1 $2 $3').trim();
+    } else {
+        // Standardize single spaces
+        formatted = formatted.replace(/\s+/g, ' ');
+    }
+
+    canonicalModelMap.set(key, formatted);
+    return formatted;
+}
+
 // Helper: Get item name string (supports both single name and legacy brand+model)
 function getItemName(item) {
     if (!item) return '-';
-    if (item.brand && item.model) return `${item.brand} ${item.model}`;
-    return item.model || item.brand || '-';
+    let raw = '';
+    if (item.brand && item.model) raw = `${item.brand} ${item.model}`;
+    else raw = item.model || item.brand || '-';
+
+    return formatCanonicalModel(raw);
 }
+
+function sanitizeStateData() {
+    if (state.incoming && Array.isArray(state.incoming)) {
+        state.incoming.forEach(inc => {
+            if (inc.model) inc.model = formatCanonicalModel(inc.model);
+            if (inc.items && Array.isArray(inc.items)) {
+                inc.items.forEach(i => {
+                    if (i.model) i.model = formatCanonicalModel(i.model);
+                });
+            }
+        });
+    }
+    if (state.outgoing && Array.isArray(state.outgoing)) {
+        state.outgoing.forEach(out => {
+            if (out.model) out.model = formatCanonicalModel(out.model);
+        });
+    }
+    if (state.returned && Array.isArray(state.returned)) {
+        state.returned.forEach(ret => {
+            if (ret.model) ret.model = formatCanonicalModel(ret.model);
+        });
+    }
+}
+
+// Perform immediate sanitization of loaded state
+sanitizeStateData();
 
 // 3. Set Default Date Picker inputs to Today
 function setDefaultDates() {
@@ -329,6 +414,7 @@ function setDefaultDates() {
     const dateInputs = [
         "yeni-tarix",
         "cixan-tarix",
+        "elave-tarix",
         "filter-date"
     ];
 
@@ -409,6 +495,38 @@ function initSearchListeners() {
             renderAnbarTable();
         });
     }
+
+    const searchExtra = document.getElementById("search-elave-date");
+    const clearExtra = document.getElementById("clear-elave-search");
+    if (searchExtra && clearExtra) {
+        searchExtra.addEventListener("change", () => {
+            searchQueries.extra = searchExtra.value;
+            clearExtra.style.display = searchQueries.extra ? "inline-block" : "none";
+            renderExtraPaymentsTable();
+        });
+        clearExtra.addEventListener("click", () => {
+            searchExtra.value = "";
+            searchQueries.extra = "";
+            clearExtra.style.display = "none";
+            renderExtraPaymentsTable();
+        });
+    }
+
+    const searchBorc = document.getElementById("search-borc-input");
+    const clearBorc = document.getElementById("clear-borc-search");
+    if (searchBorc && clearBorc) {
+        searchBorc.addEventListener("input", () => {
+            searchQueries.borc = searchBorc.value;
+            clearBorc.style.display = searchQueries.borc ? "inline-block" : "none";
+            renderBorcMallarTable();
+        });
+        clearBorc.addEventListener("click", () => {
+            searchBorc.value = "";
+            searchQueries.borc = "";
+            clearBorc.style.display = "none";
+            renderBorcMallarTable();
+        });
+    }
 }
 
 // Temporary storage for batch incoming items
@@ -421,7 +539,7 @@ function initTempItemHandlers() {
 
     if (btnAdd && inputModel && inputSay) {
         const addFn = () => {
-            const modelVal = inputModel.value.trim();
+            const modelVal = cleanModelName(inputModel.value);
             const sayVal = parseInt(inputSay.value, 10);
 
             if (!modelVal) {
@@ -443,6 +561,7 @@ function initTempItemHandlers() {
             inputModel.value = "";
             inputSay.value = "";
             renderTempItemsList();
+            autoCalculateIncomingCosts();
             inputModel.focus();
         };
 
@@ -524,7 +643,12 @@ function initFormHandlers() {
         }
 
         const totalQty = tempIncomingItems.reduce((sum, item) => sum + item.qty, 0);
-        const modelStr = tempIncomingItems.map(i => `${i.model} (${i.qty} ədəd)`).join(', ');
+        const modelStr = tempIncomingItems.map(i => cleanModelName(i.model)).join(', ');
+        
+        const inputUnitPrice = parseFloat(document.getElementById("yeni-birim-qiymet").value);
+        const unitPriceVal = !isNaN(inputUnitPrice) && inputUnitPrice > 0 
+            ? inputUnitPrice 
+            : (totalQty > 0 ? totalCostVal / totalQty : 0);
 
         const record = {
             id: generateId(),
@@ -532,6 +656,7 @@ function initFormHandlers() {
             model: modelStr,
             items: [...tempIncomingItems],
             qty: totalQty,
+            unitPrice: unitPriceVal,
             cost: totalCostVal,
             paid: totalPaidVal
         };
@@ -547,6 +672,46 @@ function initFormHandlers() {
         formYeni.reset();
         setDefaultDates();
     });
+
+    // Auto-calculate unit price vs total cost
+    const inputUnitPriceEl = document.getElementById("yeni-birim-qiymet");
+    const inputTotalCostEl = document.getElementById("yeni-mebleg");
+
+    if (inputUnitPriceEl && inputTotalCostEl) {
+        inputUnitPriceEl.addEventListener("input", () => {
+            const unitP = parseFloat(inputUnitPriceEl.value);
+            const totalQty = tempIncomingItems.reduce((sum, i) => sum + i.qty, 0) || parseInt(document.getElementById("yeni-say").value || "0", 10);
+            if (!isNaN(unitP) && unitP > 0 && totalQty > 0) {
+                inputTotalCostEl.value = (unitP * totalQty).toFixed(2);
+            }
+        });
+
+        inputTotalCostEl.addEventListener("input", () => {
+            const totalCost = parseFloat(inputTotalCostEl.value);
+            const totalQty = tempIncomingItems.reduce((sum, i) => sum + i.qty, 0) || parseInt(document.getElementById("yeni-say").value || "0", 10);
+            if (!isNaN(totalCost) && totalCost > 0 && totalQty > 0) {
+                inputUnitPriceEl.value = (totalCost / totalQty).toFixed(2);
+            }
+        });
+    }
+
+function autoCalculateIncomingCosts() {
+    const inputUnitPriceEl = document.getElementById("yeni-birim-qiymet");
+    const inputTotalCostEl = document.getElementById("yeni-mebleg");
+    const totalQty = tempIncomingItems.reduce((sum, i) => sum + i.qty, 0);
+
+    if (inputUnitPriceEl && inputTotalCostEl && totalQty > 0) {
+        const unitP = parseFloat(inputUnitPriceEl.value);
+        if (!isNaN(unitP) && unitP > 0) {
+            inputTotalCostEl.value = (unitP * totalQty).toFixed(2);
+        } else {
+            const totalCost = parseFloat(inputTotalCostEl.value);
+            if (!isNaN(totalCost) && totalCost > 0) {
+                inputUnitPriceEl.value = (totalCost / totalQty).toFixed(2);
+            }
+        }
+    }
+}
 
     // Form 2: Çıxan Mallar
     const formCixan = document.getElementById("form-cixan");
@@ -570,6 +735,32 @@ function initFormHandlers() {
         formCixan.reset();
         setDefaultDates();
     });
+
+    // Form 3: Əlavə Ödənişlər
+    const formElave = document.getElementById("form-elave-odenis");
+    if (formElave) {
+        formElave.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const amtVal = parseFloat(document.getElementById("elave-mebleg").value);
+            if (isNaN(amtVal) || amtVal <= 0) {
+                alert("Zəhmət olmasa ödənilən məbləği düzgün daxil edin.");
+                return;
+            }
+            const record = {
+                id: generateId(),
+                date: document.getElementById("elave-tarix").value,
+                category: document.getElementById("elave-kateqoriya").value,
+                amount: amtVal,
+                note: document.getElementById("elave-qeyd").value.trim()
+            };
+
+            state.extra_payments.push(record);
+            saveState();
+            renderExtraPaymentsTable();
+            formElave.reset();
+            setDefaultDates();
+        });
+    }
 }
 
 // Helper: Generate Unique ID
@@ -582,6 +773,10 @@ function renderAllTables() {
     renderIncomingTable();
     renderOutgoingTable();
     renderAnbarTable();
+    renderExtraPaymentsTable();
+    renderBorcMallarTable();
+    updateModelDatalist();
+    updateStatisticsData();
 }
 
 function renderIncomingTable() {
@@ -597,19 +792,21 @@ function renderIncomingTable() {
     const sorted = filtered.sort((a, b) => b.date.localeCompare(a.date));
 
     if (sorted.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Məlumat tapılmadı</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Məlumat tapılmadı</td></tr>`;
         return;
     }
 
     sorted.forEach(item => {
         const paidVal = item.paid !== undefined ? item.paid : item.cost;
         const balance = item.cost - paidVal;
+        const unitPriceDisp = item.unitPrice !== undefined ? item.unitPrice : (item.qty ? item.cost / item.qty : 0);
         
         const tr = document.createElement("tr");
         tr.innerHTML = `
             <td>${item.date}</td>
             <td>${getItemName(item)}</td>
             <td>${item.qty}</td>
+            <td style="font-weight: 600; color: var(--primary-color);">${unitPriceDisp.toFixed(2)} AZN</td>
             <td>${item.cost.toFixed(2)} AZN</td>
             <td>${paidVal.toFixed(2)} AZN</td>
             <td style="font-weight: 600; color: ${balance > 0 ? 'var(--danger-color)' : 'var(--success-color)'};">
@@ -638,10 +835,16 @@ function renderOutgoingTable() {
     }
 
     sorted.forEach(item => {
-        const isReturned = item.isReturned || state.returned.some(r => r.outgoingId === item.id || (r.model === getItemName(item) && r.technician === item.technician && r.date === item.date));
-        if (isReturned && !item.isReturned) {
-            item.isReturned = true;
+        const itemNormName = getNormalizedModelKey(getItemName(item));
+        const hasMatchingReturn = state.returned.some(r => 
+            r.outgoingId === item.id || 
+            (getNormalizedModelKey(r.model) === itemNormName && r.technician === item.technician && r.date === item.date)
+        );
+
+        if (item.isReturned && !hasMatchingReturn) {
+            item.isReturned = false;
         }
+        const isReturned = item.isReturned === true;
 
         const paymentStatus = item.paymentStatus || 'pending';
         const isPaid = paymentStatus === 'paid';
@@ -656,8 +859,8 @@ function renderOutgoingTable() {
         }
 
         const returnBtnHTML = isReturned
-            ? `<button type="button" class="btn-return btn-returned-done" disabled title="Bu mal artıq qaytarılıb"><i class="bx bx-revision"></i></button>`
-            : `<button type="button" class="btn-return" onclick="returnRecord('${item.id}')" title="Malların qaytarılması üçün klikləyin"><i class="bx bx-revision"></i></button>`;
+            ? `<button type="button" class="btn-return btn-returned-done" onclick="cancelReturnRecord('${item.id}')" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600;" title="Səhvən qaytarılıbsa, ləğv etmək üçün klikləyin"><i class="bx bx-undo"></i> Ləğv Et</button>`
+            : `<button type="button" class="btn-return" onclick="returnRecord('${item.id}')" title="Malların qaytarılması üçün klikləyin"><i class="bx bx-revision"></i> Qaytar</button>`;
 
         const confirmPayBtnHTML = isPaid
             ? `<button type="button" class="btn-confirm-green active-paid btn-confirm-disabled" disabled title="Bu malın ödənişi artıq təsdiqlənib"><i class="bx bx-check-double"></i></button>`
@@ -731,6 +934,8 @@ window.deleteRecord = function(storeType, id) {
                 if (outItem) outItem.isReturned = false;
             }
             state.returned = state.returned.filter(x => x.id !== id);
+        } else if (storeType === 'extra_payment') {
+            state.extra_payments = state.extra_payments.filter(x => x.id !== id);
         }
         saveState();
         renderAllTables();
@@ -783,6 +988,26 @@ window.returnRecord = function(id) {
     alert("Qeyd qaytarılan mallar siyahısına əlavə edildi.");
 };
 
+window.cancelReturnRecord = function(id) {
+    const record = state.outgoing.find(x => x.id === id);
+    if (!record) return;
+
+    if (confirm(`"${getItemName(record)}" malı üçün qaytarılma statusunu ləğv etmək istədiyinizdən əminsiniz? (Mal yenidən çıxan mallara bərpa olunacaq)`)) {
+        record.isReturned = false;
+        
+        // Remove from returned array
+        const recNameNorm = getNormalizedModelKey(getItemName(record));
+        state.returned = state.returned.filter(r => {
+            const isMatch = r.outgoingId === id || (getNormalizedModelKey(r.model) === recNameNorm && r.technician === record.technician);
+            return !isMatch;
+        });
+
+        saveState();
+        renderAllTables();
+        alert("Qaytarılma ləğv olundu və mal çıxan mallar siyahısına bərpa edildi.");
+    }
+};
+
 // 5a. Warehouse Inventory Stock Calculator & Renderer
 function getWarehouseInventory() {
     const inventory = {};
@@ -791,21 +1016,34 @@ function getWarehouseInventory() {
     state.incoming.forEach(inc => {
         if (inc.items && Array.isArray(inc.items) && inc.items.length > 0) {
             inc.items.forEach(i => {
-                const modelKey = (i.model || '').trim();
-                if (modelKey) {
-                    if (!inventory[modelKey]) {
-                        inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+                const normKey = getNormalizedModelKey(i.model);
+                if (normKey) {
+                    if (!inventory[normKey]) {
+                        inventory[normKey] = { 
+                            model: formatCanonicalModel(i.model), 
+                            incoming: 0, 
+                            outgoing: 0, 
+                            returned: 0, 
+                            stock: 0 
+                        };
                     }
-                    inventory[modelKey].incoming += i.qty;
+                    inventory[normKey].incoming += i.qty;
                 }
             });
         } else {
-            const modelKey = getItemName(inc).trim();
-            if (modelKey && modelKey !== '-') {
-                if (!inventory[modelKey]) {
-                    inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+            const name = getItemName(inc);
+            const normKey = getNormalizedModelKey(name);
+            if (normKey && normKey !== '-') {
+                if (!inventory[normKey]) {
+                    inventory[normKey] = { 
+                        model: formatCanonicalModel(name), 
+                        incoming: 0, 
+                        outgoing: 0, 
+                        returned: 0, 
+                        stock: 0 
+                    };
                 }
-                inventory[modelKey].incoming += inc.qty;
+                inventory[normKey].incoming += inc.qty;
             }
         }
     });
@@ -813,12 +1051,19 @@ function getWarehouseInventory() {
     // 2. Process Outgoing Goods (Yalnız Razin anbarından çıxan mallar anbar stokunu azaldır)
     state.outgoing.forEach(out => {
         if ((out.warehouse || '').trim() === "Razin") {
-            const modelKey = getItemName(out).trim();
-            if (modelKey && modelKey !== '-') {
-                if (!inventory[modelKey]) {
-                    inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+            const name = getItemName(out);
+            const normKey = getNormalizedModelKey(name);
+            if (normKey && normKey !== '-') {
+                if (!inventory[normKey]) {
+                    inventory[normKey] = { 
+                        model: formatCanonicalModel(name), 
+                        incoming: 0, 
+                        outgoing: 0, 
+                        returned: 0, 
+                        stock: 0 
+                    };
                 }
-                inventory[modelKey].outgoing += out.qty;
+                inventory[normKey].outgoing += out.qty;
             }
         }
     });
@@ -826,20 +1071,27 @@ function getWarehouseInventory() {
     // 3. Process Returned Goods (Yalnız Razin anbarına qaytarılan mallar stoka bərpa olunur)
     state.returned.forEach(ret => {
         if (!ret.warehouse || (ret.warehouse || '').trim() === "Razin") {
-            const modelKey = getItemName(ret).trim();
-            if (modelKey && modelKey !== '-') {
-                if (!inventory[modelKey]) {
-                    inventory[modelKey] = { model: modelKey, incoming: 0, outgoing: 0, returned: 0, stock: 0 };
+            const name = getItemName(ret);
+            const normKey = getNormalizedModelKey(name);
+            if (normKey && normKey !== '-') {
+                if (!inventory[normKey]) {
+                    inventory[normKey] = { 
+                        model: formatCanonicalModel(name), 
+                        incoming: 0, 
+                        outgoing: 0, 
+                        returned: 0, 
+                        stock: 0 
+                    };
                 }
-                inventory[modelKey].returned += ret.qty;
+                inventory[normKey].returned += ret.qty;
             }
         }
     });
 
     // 4. Calculate Net Stock: Stock = Incoming + Returned - Outgoing
     const result = [];
-    Object.keys(inventory).forEach(modelKey => {
-        const item = inventory[modelKey];
+    Object.keys(inventory).forEach(normKey => {
+        const item = inventory[normKey];
         item.stock = item.incoming + item.returned - item.outgoing;
         result.push(item);
     });
@@ -1104,6 +1356,17 @@ function initSettingsHandlers() {
             retList.innerHTML = ret.map(x => `<li><strong>${getItemName(x)}</strong> - ${x.qty} ədəd (Usta: ${x.technician}, Anbar: ${x.warehouse || '-'}, Ünvan: ${x.address || '-'}, Satış qiyməti: ${x.price ? x.price.toFixed(2) + ' AZN' : '-'})</li>`).join('');
         }
 
+        // Render Extra Payments
+        const extra = state.extra_payments.filter(x => x.date === dateVal);
+        const extraList = document.getElementById("history-extra-list");
+        if (extraList) {
+            if (extra.length === 0) {
+                extraList.innerHTML = `<li>Əlavə ödəniş qeydi tapılmadı.</li>`;
+            } else {
+                extraList.innerHTML = extra.map(x => `<li><strong>${x.category}</strong> - ${x.amount.toFixed(2)} AZN (${x.note || 'Qeyd yoxdur'})</li>`).join('');
+            }
+        }
+
         document.getElementById("history-results").style.display = "block";
     });
 
@@ -1134,6 +1397,7 @@ function initSettingsHandlers() {
         const inc = state.incoming.filter(x => isBetween(x.date));
         const out = state.outgoing.filter(x => isBetween(x.date));
         const ret = state.returned.filter(x => isBetween(x.date));
+        const extra = state.extra_payments.filter(x => isBetween(x.date));
 
         // Quantities
         const incQty = inc.reduce((sum, x) => sum + x.qty, 0);
@@ -1145,6 +1409,7 @@ function initSettingsHandlers() {
         const rawSalesRevenue = out.reduce((sum, x) => sum + (x.qty * x.price), 0);
 
         const retQty = ret.reduce((sum, x) => sum + x.qty, 0);
+        const extraCost = extra.reduce((sum, x) => sum + x.amount, 0);
 
         // Calculate returned revenue to deduct
         let returnedRevenueDeduction = 0;
@@ -1164,11 +1429,12 @@ function initSettingsHandlers() {
         inc.forEach(x => {
             if (x.items && Array.isArray(x.items) && x.items.length > 0) {
                 x.items.forEach(i => {
-                    incGroup[i.model] = (incGroup[i.model] || 0) + i.qty;
+                    const disp = formatCanonicalModel(i.model);
+                    incGroup[disp] = (incGroup[disp] || 0) + i.qty;
                 });
             } else {
-                const key = getItemName(x);
-                incGroup[key] = (incGroup[key] || 0) + x.qty;
+                const disp = formatCanonicalModel(getItemName(x));
+                incGroup[disp] = (incGroup[disp] || 0) + x.qty;
             }
         });
         
@@ -1184,13 +1450,13 @@ function initSettingsHandlers() {
         // Group sold items by brand and model (subtracting returns)
         const soldGroup = {};
         out.forEach(x => {
-            const key = getItemName(x);
-            soldGroup[key] = (soldGroup[key] || 0) + x.qty;
+            const disp = formatCanonicalModel(getItemName(x));
+            soldGroup[disp] = (soldGroup[disp] || 0) + x.qty;
         });
         ret.forEach(x => {
-            const key = getItemName(x);
-            if (soldGroup[key]) {
-                soldGroup[key] = Math.max(0, soldGroup[key] - x.qty);
+            const disp = formatCanonicalModel(getItemName(x));
+            if (soldGroup[disp]) {
+                soldGroup[disp] = Math.max(0, soldGroup[disp] - x.qty);
             }
         });
 
@@ -1214,11 +1480,16 @@ function initSettingsHandlers() {
         
         document.getElementById("report-returned-qty").textContent = `${retQty} ədəd`;
 
+        const reportExtraCostEl = document.getElementById("report-extra-cost");
+        if (reportExtraCostEl) reportExtraCostEl.textContent = `${extraCost.toFixed(2)} AZN`;
+
         // Financial cards
         document.getElementById("summary-total-cost").textContent = `${incCost.toFixed(2)} AZN`;
+        const summaryExtraCostEl = document.getElementById("summary-extra-cost");
+        if (summaryExtraCostEl) summaryExtraCostEl.textContent = `${extraCost.toFixed(2)} AZN`;
         document.getElementById("summary-total-revenue").textContent = `${netSalesRevenue.toFixed(2)} AZN`;
 
-        const profit = netSalesRevenue - incCost;
+        const profit = netSalesRevenue - incCost - extraCost;
         const profitEl = document.getElementById("summary-profit");
         profitEl.textContent = `${profit.toFixed(2)} AZN`;
 
@@ -1230,4 +1501,559 @@ function initSettingsHandlers() {
 
         document.getElementById("report-results").style.display = "block";
     });
+}
+
+// 8. Extra Payments Renderer & Calculator
+function renderExtraPaymentsTable() {
+    updateExtraPaymentsStats();
+    const tbody = document.querySelector("#table-elave-odenis tbody");
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+
+    let filtered = [...state.extra_payments];
+    if (searchQueries.extra) {
+        filtered = filtered.filter(x => x.date === searchQueries.extra);
+    }
+
+    const sorted = filtered.sort((a, b) => b.date.localeCompare(a.date));
+
+    if (sorted.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Məlumat tapılmadı</td></tr>`;
+        return;
+    }
+
+    sorted.forEach(item => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>${item.date}</td>
+            <td><strong>${item.category}</strong></td>
+            <td style="font-weight: 700; color: var(--danger-color);">${item.amount.toFixed(2)} AZN</td>
+            <td>${item.note || '-'}</td>
+            <td><button type="button" class="btn-delete" onclick="deleteRecord('extra_payment', '${item.id}')" title="Sil"><i class="bx bx-trash" style="font-size: 1.1rem; vertical-align: middle;"></i> Sil</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function updateExtraPaymentsStats() {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const monthStr = todayStr.substring(0, 7);
+
+    const totalAmount = state.extra_payments.reduce((sum, x) => sum + x.amount, 0);
+    const todayAmount = state.extra_payments.filter(x => x.date === todayStr).reduce((sum, x) => sum + x.amount, 0);
+    const monthAmount = state.extra_payments.filter(x => x.date.startsWith(monthStr)).reduce((sum, x) => sum + x.amount, 0);
+
+    const elTotal = document.getElementById("elave-total-amount");
+    const elToday = document.getElementById("elave-today-amount");
+    const elMonth = document.getElementById("elave-month-amount");
+
+    if (elTotal) elTotal.textContent = `${totalAmount.toFixed(2)} AZN`;
+    if (elToday) elToday.textContent = `${todayAmount.toFixed(2)} AZN`;
+    if (elMonth) elMonth.textContent = `${monthAmount.toFixed(2)} AZN`;
+}
+
+// 9. Borca Alınan Mallar Renderer & Supplier Debt Payment Handler
+function renderBorcMallarTable() {
+    updateBorcMallarStats();
+    const tbody = document.querySelector("#table-borc-mallar tbody");
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+
+    let records = [...state.incoming];
+
+    const searchVal = (searchQueries.borc || "").toLowerCase().trim();
+    if (searchVal) {
+        records = records.filter(x => 
+            x.date.includes(searchVal) || 
+            getItemName(x).toLowerCase().includes(searchVal)
+        );
+    }
+
+    // Sort descending by date
+    const sorted = records.sort((a, b) => b.date.localeCompare(a.date));
+
+    if (sorted.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Məlumat tapılmadı</td></tr>`;
+        return;
+    }
+
+    sorted.forEach(item => {
+        const paidVal = item.paid !== undefined ? item.paid : item.cost;
+        const balance = item.cost - paidVal;
+        const itemName = getItemName(item);
+
+        let statusBadge = "";
+        if (balance > 0) {
+            statusBadge = `<span style="background: rgba(239, 68, 68, 0.15); color: var(--danger-color); padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700;">Qalıq Borc Var</span>`;
+        } else {
+            statusBadge = `<span style="background: rgba(16, 185, 129, 0.15); color: var(--success-color); padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700;">Borc Ödənilib</span>`;
+        }
+
+        const payBtnHTML = balance > 0
+            ? `<button type="button" class="btn-primary" onclick="paySupplierDebt('${item.id}')" style="padding: 5px 12px; font-size: 0.82rem; background: var(--accent-color); color: #fff; border: none; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Borc Ödə"><i class="bx bx-credit-card"></i> Borc Ödə</button>`
+            : `<span style="color: var(--success-color); font-size: 0.85rem; font-weight: 600;">✔️ Tam Ödənilib</span>`;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>${item.date}</td>
+            <td><strong>${itemName}</strong></td>
+            <td>${item.qty}</td>
+            <td>${item.cost.toFixed(2)} AZN</td>
+            <td>${paidVal.toFixed(2)} AZN</td>
+            <td style="font-weight: 700; color: ${balance > 0 ? 'var(--danger-color)' : 'var(--success-color)'};">
+                ${balance.toFixed(2)} AZN
+            </td>
+            <td>${statusBadge}</td>
+            <td>${payBtnHTML}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function updateBorcMallarStats() {
+    let totalBalance = 0;
+    let countUnpaid = 0;
+    let countPaid = 0;
+
+    state.incoming.forEach(item => {
+        const paidVal = item.paid !== undefined ? item.paid : item.cost;
+        const bal = item.cost - paidVal;
+        if (bal > 0) {
+            totalBalance += bal;
+            countUnpaid++;
+        } else {
+            countPaid++;
+        }
+    });
+
+    const elBalance = document.getElementById("borc-total-balance");
+    const elUnpaid = document.getElementById("borc-count-unpaid");
+    const elPaid = document.getElementById("borc-count-paid");
+
+    if (elBalance) elBalance.textContent = `${totalBalance.toFixed(2)} AZN`;
+    if (elUnpaid) elUnpaid.textContent = `${countUnpaid} partiya`;
+    if (elPaid) elPaid.textContent = `${countPaid} partiya`;
+}
+
+window.paySupplierDebt = function(id) {
+    const record = state.incoming.find(x => x.id === id);
+    if (!record) return;
+
+    const currentPaid = record.paid !== undefined ? record.paid : record.cost;
+    const remainingDebt = record.cost - currentPaid;
+
+    if (remainingDebt <= 0) {
+        alert("Bu partiya üçün qalıq borc yoxdur (Tam ödənilib).");
+        return;
+    }
+
+    const itemName = getItemName(record);
+    const payInput = prompt(`"${itemName}" alış partiyası üçün ödəniləcək məbləği daxil edin (Cari Qalıq Borc: ${remainingDebt.toFixed(2)} AZN):`, remainingDebt.toFixed(2));
+    
+    if (payInput === null) return;
+
+    const payAmt = parseFloat(payInput);
+    if (isNaN(payAmt) || payAmt <= 0) {
+        alert("Zəhmət olmasa düzgün məbləğ daxil edin.");
+        return;
+    }
+
+    if (payAmt > remainingDebt + 0.01) {
+        alert(`Daxil edilən məbləğ qalıq borcdan (${remainingDebt.toFixed(2)} AZN) böyük ola bilməz.`);
+        return;
+    }
+
+    // Update incoming record paid amount
+    record.paid = currentPaid + payAmt;
+
+    // Log entry in extra_payments for accounting expense tracking
+    const todayStr = new Date().toISOString().split('T')[0];
+    const extraRecord = {
+        id: generateId(),
+        date: todayStr,
+        category: "Təchizatçıya Ödəniş",
+        amount: payAmt,
+        note: `Alış borcu ödənişi: ${itemName}`
+    };
+    state.extra_payments.push(extraRecord);
+
+    saveState();
+    renderAllTables();
+    alert(`✅ ${payAmt.toFixed(2)} AZN borc ödənişi uğurla həyata keçirildi!`);
+};
+
+// 10. Dynamic Auto-complete Model Datalist Generator
+function updateModelDatalist() {
+    const datalist = document.getElementById("model-list");
+    if (!datalist) return;
+
+    sanitizeStateData();
+
+    const modelsMap = new Map(); // normalizedKey -> canonicalDisplay
+
+    // From warehouse inventory
+    if (typeof getWarehouseInventory === "function") {
+        const inventory = getWarehouseInventory();
+        inventory.forEach(item => {
+            const normKey = getNormalizedModelKey(item.model);
+            if (normKey) {
+                modelsMap.set(normKey, formatCanonicalModel(item.model));
+            }
+        });
+    }
+
+    // From incoming records
+    if (state.incoming && Array.isArray(state.incoming)) {
+        state.incoming.forEach(inc => {
+            if (inc.items && Array.isArray(inc.items)) {
+                inc.items.forEach(i => {
+                    const normKey = getNormalizedModelKey(i.model);
+                    if (normKey) modelsMap.set(normKey, formatCanonicalModel(i.model));
+                });
+            }
+            const name = getItemName(inc);
+            const normKey = getNormalizedModelKey(name);
+            if (normKey && normKey !== '-') modelsMap.set(normKey, formatCanonicalModel(name));
+        });
+    }
+
+    // From outgoing records
+    if (state.outgoing && Array.isArray(state.outgoing)) {
+        state.outgoing.forEach(out => {
+            const name = getItemName(out);
+            const normKey = getNormalizedModelKey(name);
+            if (normKey && normKey !== '-') modelsMap.set(normKey, formatCanonicalModel(name));
+        });
+    }
+
+    const sortedModels = Array.from(modelsMap.values()).sort((a, b) => a.localeCompare(b));
+
+    datalist.innerHTML = sortedModels.map(m => `<option value="${m}"></option>`).join('');
+}
+
+// 11. Statistika (Sales Analytics & YoY Chart Engine)
+let chartMonthlySalesInstance = null;
+let chartTopModelsInstance = null;
+let selectedStatsYear = "2026";
+
+function initStatisticsTab() {
+    const yearSelect = document.getElementById("stats-year-select");
+    if (!yearSelect) return;
+
+    const yearsSet = new Set();
+    const startYear = 2026;
+    const currentYr = new Date().getFullYear();
+    const endYear = Math.max(startYear + 5, currentYr + 2); // 2026 up to 2031+
+
+    for (let y = startYear; y <= endYear; y++) {
+        yearsSet.add(y.toString());
+    }
+
+    state.outgoing.forEach(r => {
+        if (r.date && r.date.length >= 4) {
+            const yr = parseInt(r.date.substring(0, 4), 10);
+            if (!isNaN(yr) && yr >= 2026) yearsSet.add(yr.toString());
+        }
+    });
+    state.incoming.forEach(r => {
+        if (r.date && r.date.length >= 4) {
+            const yr = parseInt(r.date.substring(0, 4), 10);
+            if (!isNaN(yr) && yr >= 2026) yearsSet.add(yr.toString());
+        }
+    });
+
+    const sortedYears = Array.from(yearsSet).sort((a, b) => a.localeCompare(b));
+    yearSelect.innerHTML = sortedYears.map(y => `<option value="${y}" ${y === selectedStatsYear ? 'selected' : ''}>${y}-cı il</option>`).join('');
+
+    yearSelect.addEventListener("change", () => {
+        selectedStatsYear = yearSelect.value;
+        updateStatisticsData();
+    });
+}
+
+function updateStatisticsData() {
+    if (!document.getElementById("statistika-tab")) return;
+
+    const yearSelect = document.getElementById("stats-year-select");
+    if (yearSelect && (!yearSelect.value || yearSelect.options.length === 0)) {
+        initStatisticsTab();
+    }
+    if (yearSelect && yearSelect.value) {
+        selectedStatsYear = yearSelect.value;
+    }
+
+    const curYear = parseInt(selectedStatsYear, 10);
+    const prevYear = curYear - 1;
+    const curYearStr = curYear.toString();
+    const prevYearStr = prevYear.toString();
+
+    // 1. Calculate Yearly Metrics
+    const curYearOutgoing = state.outgoing.filter(x => x.date && x.date.startsWith(curYearStr));
+    const curYearReturned = state.returned.filter(x => x.date && x.date.startsWith(curYearStr));
+
+    const prevYearOutgoing = state.outgoing.filter(x => x.date && x.date.startsWith(prevYearStr));
+    const prevYearReturned = state.returned.filter(x => x.date && x.date.startsWith(prevYearStr));
+
+    const getNetRevenue = (outgoingArr, returnedArr) => {
+        const rawRev = outgoingArr.reduce((sum, x) => sum + (x.qty * x.price), 0);
+        let retDed = 0;
+        returnedArr.forEach(r => {
+            const rName = getItemName(r);
+            const match = state.outgoing.find(o => getItemName(o) === rName && o.technician === r.technician) || state.outgoing.find(o => getItemName(o) === rName);
+            if (match) retDed += r.qty * match.price;
+        });
+        return Math.max(0, rawRev - retDed);
+    };
+
+    const getNetSoldQty = (outgoingArr, returnedArr) => {
+        const rawQty = outgoingArr.reduce((sum, x) => sum + x.qty, 0);
+        const retQty = returnedArr.reduce((sum, x) => sum + x.qty, 0);
+        return Math.max(0, rawQty - retQty);
+    };
+
+    const curYearSales = getNetRevenue(curYearOutgoing, curYearReturned);
+    const prevYearSales = getNetRevenue(prevYearOutgoing, prevYearReturned);
+    const curYearSoldQty = getNetSoldQty(curYearOutgoing, curYearReturned);
+
+    // YoY Growth % calculation
+    let yoyGrowthPercent = 0;
+    if (prevYearSales > 0) {
+        yoyGrowthPercent = ((curYearSales - prevYearSales) / prevYearSales) * 100;
+    } else if (curYearSales > 0) {
+        yoyGrowthPercent = 100;
+    }
+
+    // Update Stat Cards UI
+    const elCurSales = document.getElementById("stats-current-year-sales");
+    const elPrevSales = document.getElementById("stats-prev-year-sales");
+    const elYoyGrowth = document.getElementById("stats-yoy-growth");
+    const elSoldQty = document.getElementById("stats-year-sold-qty");
+
+    const elCurLabel = document.getElementById("stats-current-year-label");
+    const elPrevLabel = document.getElementById("stats-prev-year-label");
+    const elTableYear = document.getElementById("stats-table-year-label");
+
+    if (elCurSales) elCurSales.textContent = `${curYearSales.toFixed(2)} AZN`;
+    if (elPrevSales) elPrevSales.textContent = `${prevYearSales.toFixed(2)} AZN`;
+    if (elSoldQty) elSoldQty.textContent = `${curYearSoldQty} ədəd`;
+    if (elTableYear) elTableYear.textContent = curYearStr;
+
+    if (elCurLabel) elCurLabel.textContent = `${curYearStr}-ci il üzrə xalis satış`;
+    if (elPrevLabel) elPrevLabel.textContent = `${prevYearStr}-ci il üzrə məbləğ`;
+
+    if (elYoyGrowth) {
+        const sign = yoyGrowthPercent >= 0 ? "+" : "";
+        elYoyGrowth.textContent = `${sign}${yoyGrowthPercent.toFixed(1)}%`;
+        if (yoyGrowthPercent >= 0) {
+            elYoyGrowth.style.color = "var(--success-color)";
+        } else {
+            elYoyGrowth.style.color = "var(--danger-color)";
+        }
+    }
+
+    // 2. Month-by-Month Breakdown (Yanvar - Dekabr)
+    const monthNames = [
+        "Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun",
+        "İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"
+    ];
+
+    const monthlyData = monthNames.map((name, index) => {
+        const monthNumStr = (index + 1).toString().padStart(2, '0');
+        const monthPrefix = `${curYearStr}-${monthNumStr}`;
+
+        const mOut = curYearOutgoing.filter(x => x.date && x.date.startsWith(monthPrefix));
+        const mRet = curYearReturned.filter(x => x.date && x.date.startsWith(monthPrefix));
+
+        const rawQty = mOut.reduce((sum, x) => sum + x.qty, 0);
+        const retQty = mRet.reduce((sum, x) => sum + x.qty, 0);
+        const netQty = Math.max(0, rawQty - retQty);
+
+        const rawRev = mOut.reduce((sum, x) => sum + (x.qty * x.price), 0);
+        let retDed = 0;
+        mRet.forEach(r => {
+            const rName = getItemName(r);
+            const match = state.outgoing.find(o => getItemName(o) === rName);
+            if (match) retDed += r.qty * match.price;
+        });
+        const netRev = Math.max(0, rawRev - retDed);
+
+        return {
+            monthName: name,
+            monthNum: monthNumStr,
+            rawQty,
+            retQty,
+            netQty,
+            rawRev,
+            netRev
+        };
+    });
+
+    // Render Monthly Table
+    renderMonthlyStatsTable(monthlyData);
+
+    // 3. Top Selling Product Models for the Year
+    const modelSalesMap = new Map();
+    curYearOutgoing.forEach(out => {
+        const name = getItemName(out);
+        const normKey = getNormalizedModelKey(name);
+        if (normKey) {
+            const existing = modelSalesMap.get(normKey) || { name: formatCanonicalModel(name), qty: 0, revenue: 0 };
+            existing.qty += out.qty;
+            existing.revenue += out.qty * out.price;
+            modelSalesMap.set(normKey, existing);
+        }
+    });
+
+    curYearReturned.forEach(ret => {
+        const name = getItemName(ret);
+        const normKey = getNormalizedModelKey(name);
+        if (normKey && modelSalesMap.has(normKey)) {
+            const existing = modelSalesMap.get(normKey);
+            existing.qty = Math.max(0, existing.qty - ret.qty);
+        }
+    });
+
+    const topModels = Array.from(modelSalesMap.values())
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 6);
+
+    // 4. Render Chart.js Visualizations
+    renderSalesCharts(monthlyData, topModels);
+}
+
+function renderMonthlyStatsTable(monthlyData) {
+    const tbody = document.querySelector("#table-monthly-stats tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    monthlyData.forEach(m => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td><strong>${m.monthName}</strong></td>
+            <td style="text-align: center;">${m.netQty} ədəd</td>
+            <td style="text-align: right;">${m.rawRev.toFixed(2)} AZN</td>
+            <td style="text-align: center; color: var(--accent-color);">${m.retQty > 0 ? '-' + m.retQty : 0} ədəd</td>
+            <td style="text-align: right; font-weight: 700; color: var(--success-color);">${m.netRev.toFixed(2)} AZN</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderSalesCharts(monthlyData, topModels) {
+    if (typeof Chart === 'undefined') return;
+
+    // 1. Line Chart: Monthly Sales Trend
+    const ctxMonthly = document.getElementById('chart-monthly-sales');
+    if (ctxMonthly) {
+        if (chartMonthlySalesInstance) {
+            chartMonthlySalesInstance.destroy();
+        }
+
+        const labels = monthlyData.map(m => m.monthName);
+        const dataRevenues = monthlyData.map(m => m.netRev);
+
+        chartMonthlySalesInstance = new Chart(ctxMonthly, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Xalis Satış Məbləği (AZN)',
+                    data: dataRevenues,
+                    borderColor: '#0284c7',
+                    backgroundColor: 'rgba(2, 132, 199, 0.12)',
+                    fill: true,
+                    tension: 0.35,
+                    borderWidth: 3,
+                    pointBackgroundColor: '#0284c7',
+                    pointRadius: 5,
+                    pointHoverRadius: 7
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                return ` Xalis Satış: ${context.parsed.y.toFixed(2)} AZN`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                        ticks: {
+                            callback: function(val) { return val + ' AZN'; }
+                        }
+                    },
+                    x: {
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    }
+
+    // 2. Bar Chart: Top Models
+    const ctxModels = document.getElementById('chart-top-models');
+    if (ctxModels) {
+        if (chartTopModelsInstance) {
+            chartTopModelsInstance.destroy();
+        }
+
+        const modelLabels = topModels.length > 0 ? topModels.map(m => m.name) : ['Məlumat Yoxdur'];
+        const modelRevenues = topModels.length > 0 ? topModels.map(m => m.revenue) : [0];
+
+        const barColors = [
+            '#0284c7', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#64748b'
+        ];
+
+        chartTopModelsInstance = new Chart(ctxModels, {
+            type: 'bar',
+            data: {
+                labels: modelLabels,
+                datasets: [{
+                    label: 'Satış Dövriyyəsi (AZN)',
+                    data: modelRevenues,
+                    backgroundColor: barColors.slice(0, modelLabels.length),
+                    borderRadius: 6,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return ` Dövriyyə: ${context.parsed.y.toFixed(2)} AZN`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                        ticks: {
+                            callback: function(val) { return val + ' AZN'; }
+                        }
+                    },
+                    x: {
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    }
 }

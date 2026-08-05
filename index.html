@@ -11,6 +11,8 @@
     <link rel="stylesheet" href="style.css">
     <!-- Boxicons for all modern icon requirements -->
     <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+    <!-- Chart.js for Sales Analytics & YoY Charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <!-- Splash Screen -->
@@ -59,6 +61,15 @@
                 </a>
                 <a href="#" class="nav-item" data-target="anbar-tab">
                     <i class='bx bx-store-alt nav-icon'></i> Anbarda Olan Mallar
+                </a>
+                <a href="#" class="nav-item" data-target="elave-odenis-tab">
+                    <i class='bx bx-wallet nav-icon'></i> Əlavə Ödənişlər
+                </a>
+                <a href="#" class="nav-item" data-target="borc-mallar-tab">
+                    <i class='bx bx-receipt nav-icon'></i> Borca Alınan Mallar
+                </a>
+                <a href="#" class="nav-item" data-target="statistika-tab">
+                    <i class='bx bx-line-chart nav-icon'></i> Statistika
                 </a>
                 <a href="#" class="nav-item" data-target="ayarlar-tab">
                     <i class='bx bx-cog nav-icon'></i> Ayarlar
@@ -232,7 +243,7 @@
                                 <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
                                     <div class="form-group" style="flex: 2; min-width: 180px; margin-bottom: 0;">
                                         <label for="yeni-model" style="font-size: 0.8rem;">Marka və Model</label>
-                                        <input type="text" id="yeni-model" placeholder="Məs. AUX 09 FF" autocomplete="off">
+                                        <input type="text" id="yeni-model" list="model-list" placeholder="Məs. AUX 09 FF (və ya siyahıdan seçin)" autocomplete="off">
                                     </div>
                                     <div class="form-group" style="flex: 1; min-width: 90px; margin-bottom: 0;">
                                         <label for="yeni-say" style="font-size: 0.8rem;">Say</label>
@@ -257,6 +268,10 @@
 
                             <!-- Financial inputs & submit button -->
                             <div class="form-grid" style="margin-bottom: 20px;">
+                                <div class="form-group">
+                                    <label for="yeni-birim-qiymet">1 ədədinin qiyməti (AZN)</label>
+                                    <input type="number" id="yeni-birim-qiymet" min="0" step="0.01" placeholder="Məs. 450">
+                                </div>
                                 <div class="form-group">
                                     <label for="yeni-mebleg">Ümumi Alış Məbləği (AZN)</label>
                                     <input type="number" id="yeni-mebleg" min="0" step="0.01" required placeholder="Məs. 4500">
@@ -288,6 +303,7 @@
                                         <th>Tarix</th>
                                         <th>Marka və Model</th>
                                         <th>Say</th>
+                                        <th>1 əd. Qiyməti (AZN)</th>
                                         <th>Ümumi Alış (AZN)</th>
                                         <th>Ödənilən (AZN)</th>
                                         <th>Qalıq (AZN)</th>
@@ -313,7 +329,7 @@
                                 </div>
                                 <div class="form-group">
                                     <label for="cixan-model">Marka və Model</label>
-                                    <input type="text" id="cixan-model" placeholder="Məs. AUX 12 FF" required autocomplete="off">
+                                    <input type="text" id="cixan-model" list="model-list" placeholder="Məs. AUX 12 FF (və ya siyahıdan seçin)" required autocomplete="off">
                                 </div>
                                 <div class="form-group">
                                     <label for="cixan-say">Say</label>
@@ -443,6 +459,234 @@
                     </div>
                 </section>
 
+                <!-- Əlavə Ödənişlər Tab -->
+                <section id="elave-odenis-tab" class="tab-content">
+                    <div class="stats-grid" style="margin-bottom: 25px;">
+                        <div class="stat-card">
+                            <i class="bx bx-wallet" style="font-size: 1.8rem; color: var(--accent-color); float: right;"></i>
+                            <h3>Ümumi Əlavə Ödənişlər</h3>
+                            <p class="stat-value" id="elave-total-amount">0.00 AZN</p>
+                            <span class="stat-label">Bütün qeydə alınmış ödənişlərin cəmi</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-calendar" style="font-size: 1.8rem; color: var(--success-color); float: right;"></i>
+                            <h3>Bugünkü Əlavə Ödənişlər</h3>
+                            <p class="stat-value" id="elave-today-amount">0.00 AZN</p>
+                            <span class="stat-label">Bugünkü ödənilən məbləğ</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-calendar-event" style="font-size: 1.8rem; color: #d97706; float: right;"></i>
+                            <h3>Bu Aykı Əlavə Ödənişlər</h3>
+                            <p class="stat-value" id="elave-month-amount">0.00 AZN</p>
+                            <span class="stat-label">Cari ay üzrə toplam ödənişlər</span>
+                        </div>
+                    </div>
+
+                    <div class="form-container">
+                        <form id="form-elave-odenis">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="elave-tarix">Tarix</label>
+                                    <input type="date" id="elave-tarix" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="elave-kateqoriya">Ödənişin Təyinatı / Kateqoriya</label>
+                                    <select id="elave-kateqoriya" required>
+                                        <option value="" disabled selected>Kateqoriya seçin</option>
+                                        <option value="Çatdırılma">Çatdırılma</option>
+                                        <option value="Komunal">Komunal</option>
+                                        <option value="Digər Xərclər">Digər Xərclər</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="elave-mebleg">Ödənilən Məbləğ (AZN)</label>
+                                    <input type="number" id="elave-mebleg" min="0.01" step="0.01" required placeholder="Məs. 150.00">
+                                </div>
+                                <div class="form-group">
+                                    <label for="elave-qeyd">Qeyd / Ətraflı Məlumat</label>
+                                    <input type="text" id="elave-qeyd" placeholder="Məs. AUX təchizatçısına qalıq borc ödənişi">
+                                </div>
+                            </div>
+                            <button type="submit" class="btn-submit" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                <i class='bx bx-check-circle' style="font-size: 1.2rem;"></i> Ödənişi Əlavə Et və Yadda Saxla
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="table-section" style="margin-top: 25px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+                            <h2>Əlavə Ödənişlərin Siyahısı</h2>
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <label for="search-elave-date" style="font-size: 0.85rem; font-weight: 600; color: var(--primary-color);">Tarixə görə axtarış:</label>
+                                <input type="date" id="search-elave-date" style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: 0.9rem;">
+                                <button id="clear-elave-search" style="background: none; border: none; font-size: 1.1rem; cursor: pointer; display: none;" title="Axtarışı sıfırla">❌</button>
+                            </div>
+                        </div>
+                        <div class="table-wrapper">
+                            <table class="data-table" id="table-elave-odenis">
+                                <thead>
+                                    <tr>
+                                        <th>Tarix</th>
+                                        <th>Təyinat / Kateqoriya</th>
+                                        <th>Məbləğ (AZN)</th>
+                                        <th>Qeyd</th>
+                                        <th>Əməliyyat</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Dynamic -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Borca Alınan Mallar Tab -->
+                <section id="borc-mallar-tab" class="tab-content">
+                    <div class="stats-grid" style="margin-bottom: 25px;">
+                        <div class="stat-card">
+                            <i class="bx bx-receipt" style="font-size: 1.8rem; color: var(--danger-color); float: right;"></i>
+                            <h3>Ümumi Qalıq Borc</h3>
+                            <p class="stat-value" id="borc-total-balance">0.00 AZN</p>
+                            <span class="stat-label">Təchizatçılara olan ümumi qalıq borc</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-time-five" style="font-size: 1.8rem; color: #d97706; float: right;"></i>
+                            <h3>Borclu Partiya Sayı</h3>
+                            <p class="stat-value" id="borc-count-unpaid">0 partiya</p>
+                            <span class="stat-label">Hələ borcu qalan alışlar</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-check-double" style="font-size: 1.8rem; color: var(--success-color); float: right;"></i>
+                            <h3>Tam Ödənilmiş Partiyalar</h3>
+                            <p class="stat-value" id="borc-count-paid">0 partiya</p>
+                            <span class="stat-label">Borcu tam sıfırlanmış alışlar</span>
+                        </div>
+                    </div>
+
+                    <div class="table-section">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+                            <h2>Borca Alınan Malların Siyahısı və Qalıq Borclar</h2>
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <label for="search-borc-input" style="font-size: 0.85rem; font-weight: 600; color: var(--primary-color);">Axtarış (Model/Tarix):</label>
+                                <input type="text" id="search-borc-input" placeholder="Məs. AUX..." style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: 0.9rem;">
+                                <button id="clear-borc-search" style="background: none; border: none; font-size: 1.1rem; cursor: pointer; display: none;" title="Axtarışı sıfırla">❌</button>
+                            </div>
+                        </div>
+                        <div class="table-wrapper">
+                            <table class="data-table" id="table-borc-mallar">
+                                <thead>
+                                    <tr>
+                                        <th>Tarix</th>
+                                        <th>Marka və Model</th>
+                                        <th>Say</th>
+                                        <th>Ümumi Alış (AZN)</th>
+                                        <th>Ödənilən (AZN)</th>
+                                        <th>Qalıq Borc (AZN)</th>
+                                        <th>Status</th>
+                                        <th>Əməliyyat</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Dynamic -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Statistika Tab -->
+                <section id="statistika-tab" class="tab-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px; background: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid var(--border-color); box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                        <div>
+                            <h2 style="font-size: 1.3rem; font-weight: 700; color: var(--primary-color); display: flex; align-items: center; gap: 8px;">
+                                <i class='bx bx-line-chart' style="color: var(--accent-color); font-size: 1.6rem;"></i> Satış Analitikası və Dövriyyə Statistikası
+                            </h2>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">İllər və aylar üzrə dinamik satış göstəriciləri, müqayisəli təhlil və qrafiklər.</p>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label for="stats-year-select" style="font-size: 0.9rem; font-weight: 700; color: var(--primary-color);">İli Seçin:</label>
+                            <select id="stats-year-select" style="padding: 8px 16px; border: 1px solid var(--border-color); border-radius: 6px; font-weight: 700; font-size: 0.95rem; color: var(--primary-color); background: #f8fafc; cursor: pointer;">
+                                <!-- Dynamically populated -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Year-over-Year Summary Stat Cards -->
+                    <div class="stats-grid" style="margin-bottom: 25px;">
+                        <div class="stat-card">
+                            <i class="bx bx-trending-up" style="font-size: 1.8rem; color: var(--success-color); float: right;"></i>
+                            <h3>Bu İlki Satış Dövriyyəsi</h3>
+                            <p class="stat-value" id="stats-current-year-sales">0.00 AZN</p>
+                            <span class="stat-label" id="stats-current-year-label">Cari il üzrə xalis satış</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-history" style="font-size: 1.8rem; color: var(--accent-color); float: right;"></i>
+                            <h3>Keçən İlki Satış Dövriyyəsi</h3>
+                            <p class="stat-value" id="stats-prev-year-sales">0.00 AZN</p>
+                            <span class="stat-label" id="stats-prev-year-label">Keçən il üzrə xalis satış</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-bar-chart-alt-2" style="font-size: 1.8rem; color: #d97706; float: right;"></i>
+                            <h3>İllik Artım / Dəyişim Faizi</h3>
+                            <p class="stat-value" id="stats-yoy-growth">0.0%</p>
+                            <span class="stat-label">Keçən ilə nəzərən satış müqayisəsi</span>
+                        </div>
+                        <div class="stat-card">
+                            <i class="bx bx-package" style="font-size: 1.8rem; color: var(--primary-color); float: right;"></i>
+                            <h3>Satılan Ümumi Mal Sayı</h3>
+                            <p class="stat-value" id="stats-year-sold-qty">0 ədəd</p>
+                            <span class="stat-label">Seçilmiş ildə xalis satılan ədəd</span>
+                        </div>
+                    </div>
+
+                    <!-- Visual Charts Grid -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 20px; margin-bottom: 25px;">
+                        <!-- Chart 1: Monthly Sales Trend Line Chart -->
+                        <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                            <h3 style="font-size: 1rem; font-weight: 700; color: var(--primary-color); margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+                                <i class="bx bx-show" style="color: var(--accent-color);"></i> Aylıq Satış Dövriyyəsi Dinamikası (AZN)
+                            </h3>
+                            <div style="position: relative; height: 300px; width: 100%;">
+                                <canvas id="chart-monthly-sales"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Chart 2: Top Selling Models Bar Chart -->
+                        <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                            <h3 style="font-size: 1rem; font-weight: 700; color: var(--primary-color); margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+                                <i class="bx bx-pie-chart-alt-2" style="color: var(--success-color);"></i> Ən Çox Satılan Modellər (Top 6)
+                            </h3>
+                            <div style="position: relative; height: 300px; width: 100%;">
+                                <canvas id="chart-top-models"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Detailed Monthly Analytical Table -->
+                    <div class="table-section">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+                            <h2>Aylar Üzrə Ətraflı Satış Hesabatı (<span id="stats-table-year-label">2026</span>)</h2>
+                        </div>
+                        <div class="table-wrapper">
+                            <table class="data-table" id="table-monthly-stats">
+                                <thead>
+                                    <tr>
+                                        <th>Ay</th>
+                                        <th style="text-align: center;">Satılan Mal Sayı</th>
+                                        <th style="text-align: right;">Ümumi Satış Dövriyyəsi (AZN)</th>
+                                        <th style="text-align: center;">Qaytarılan Say</th>
+                                        <th style="text-align: right;">Xalis Satış Məbləği (AZN)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Dynamic Month Rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- Ayarlar Tab -->
                 <section id="ayarlar-tab" class="tab-content">
                     <div class="settings-grid">
@@ -488,6 +732,15 @@
                                             <i class='bx bx-revision' style="color: var(--accent-color); font-size: 1.3rem;"></i> Qaytarılan Mallar
                                         </h4>
                                         <ul id="history-returned-list" class="history-list">
+                                            <li>Qeyd tapılmadı.</li>
+                                        </ul>
+                                    </div>
+                                    
+                                    <div class="history-block">
+                                        <h4 style="display: flex; align-items: center; gap: 6px;">
+                                            <i class='bx bx-wallet' style="color: #d97706; font-size: 1.3rem;"></i> Əlavə Ödənişlər
+                                        </h4>
+                                        <ul id="history-extra-list" class="history-list">
                                             <li>Qeyd tapılmadı.</li>
                                         </ul>
                                     </div>
@@ -545,6 +798,11 @@
                                             <span class="report-label">Qaytarılan Mallar (Ümumi Say):</span>
                                             <span class="report-val" id="report-returned-qty">0 ədəd</span>
                                         </div>
+                                        <div class="report-divider"></div>
+                                        <div class="report-stat-item">
+                                            <span class="report-label">Əlavə Ödənişlər (Ümumi Xərc):</span>
+                                            <span class="report-val text-red" id="report-extra-cost">0.00 AZN</span>
+                                        </div>
                                     </div>
 
                                     <!-- Financial Summary Cards -->
@@ -554,6 +812,10 @@
                                             <div class="summary-card">
                                                 <span class="summary-title">Ümumi Alış Xərci</span>
                                                 <span class="summary-value text-red" id="summary-total-cost">0.00 AZN</span>
+                                            </div>
+                                            <div class="summary-card">
+                                                <span class="summary-title">Əlavə Ödənişlər</span>
+                                                <span class="summary-value text-red" id="summary-extra-cost">0.00 AZN</span>
                                             </div>
                                             <div class="summary-card">
                                                 <span class="summary-title">Ümumi Satış Gəliri</span>
@@ -574,6 +836,9 @@
         </main>
     </div>
     
+    <!-- Datalist for dynamic auto-complete of existing models in warehouse -->
+    <datalist id="model-list"></datalist>
+
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
 </body>
